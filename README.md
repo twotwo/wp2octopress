@@ -26,10 +26,10 @@ so that others can benefit from it!
 
 ## Dependencies
 
-`wp2octopress.py` depends on [SQLAlchemy](http://www.sqlalchemy.org/). You can
-[install it](http://docs.sqlalchemy.org/en/rel_0_7/intro.html#install-via-easy-install-or-pip)
-easily via `pip` (`pip install SQLAlchemy`) or `easy_install` (`easy_install
-SQLAlchemy`).
+`wp2octopress.py` depends on [SQLAlchemy](http://www.sqlalchemy.org/) 2.0. You can
+see [SQLAlchemy 2.0 - Major Migration Guide](https://docs.sqlalchemy.org/en/20/changelog/migration_20.html)
+
+Dialects: Support for the [MySQL / MariaDB](https://docs.sqlalchemy.org/en/20/dialects/mysql.html) database.
 
 ## Things to watch for in output
 
@@ -56,7 +56,13 @@ fixing up the content.  However, there are a few things to watch out for.
 
 ## Usage
 
-Just run `./wp2octopress.py db host username password posts_dir pages_dir`.
+Run under python 3.11
+
+```bash
+virtualenv venv && source venv/bin/activate
+pip install -r requirements.txt && pip install -r requirements-dev.txt
+./wp2octopress.py db host username password posts_dir pages_dir
+```
 
 ## License (MIT License)
 
@@ -78,4 +84,3 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-

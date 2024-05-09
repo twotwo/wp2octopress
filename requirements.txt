@@ -1,0 +1,5 @@
+# Python311
+SQLAlchemy==2.0.30
+html2text==2024.2.26
+# mysqlclient==2.2.4
+mysql-connector-python==8.3.0
