@@ -7,9 +7,10 @@ import codecs
 import os
 import re
 import sys
+from collections import defaultdict
+from typing import Dict, Tuple
 
-from sqlalchemy import MetaData, Table, and_, create_engine, or_, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, text
 
 USAGE = "USAGE: {0} db host username password posts_dir pages_dir"
 WP_COMMENTS = {"closed": "false", "open": "true"}
@@ -57,9 +58,7 @@ def missing_name_check(post):
             name = "missing-name-" + str(missing_name_count)
             missing_name_count += 1
         sys.stderr.write(
-            "Warning: page/post {0} (ID {1}) has no name. Using name {2}\n".format(
-                post.post_title, post.ID, name
-            )
+            f"Warning: page/post {post.post_title} (ID {post.id}) has no name. Using name {name}\n"
         )
     else:
         name = post.post_name
@@ -77,7 +76,7 @@ def dump_single_page(page, output_dir):
     page_name = missing_name_check(page)
 
     subpath = os.path.join(output_dir, page_name)
-    os.mkdir(subpath)
+    os.makedirs(subpath, exist_ok=True)
     path = os.path.join(subpath, "index.md")
     output = codecs.open(path, encoding="utf-8", mode="w")
 
@@ -105,109 +104,146 @@ footer: true
     output.close()
 
 
-def dump_single_post(post, post_categories, output_dir):
+def dump_single_post(post, post_categories, post_tags, output_dir):
     """
     Dumps a single post (as opposed to a single page)
     """
 
     post_name = missing_name_check(post)
 
-    filename = "{0}-{1}-{2}-{3}.md".format(
-        post.post_date.year,
-        str(post.post_date.month).zfill(2),
-        str(post.post_date.day).zfill(2),
-        post_name,
-    )
+    filename = f"{post.post_date.year}-{str(post.post_date.month).zfill(2)}-{str(post.post_date.day).zfill(2)}-{post_name}.md"
     output = codecs.open(os.path.join(output_dir, filename), encoding="utf-8", mode="w")
 
     output_params = (
-        post.post_title,
-        str(post.post_date)[:-3],
-        WP_COMMENTS[post.comment_status],
-        ", ".join(post_categories.get(post.ID) or []),
-        WP_PUBLISH[post.post_status],
-        fix_post_content(post.post_content),
+        "layout: post",
+        f"wp_post_id: {post.id}",
+        f"slug: {post.post_name}",
+        f'author: "{post.author}"',
+        f'title: "{post.post_title}"',
+        f"date: {str(post.post_date)[:-3]}",
+        f"categories: {', '.join(post_categories.get(post.id) or [])}",
+        f"tags: {', '.join(post_tags.get(post.id) or [])}",
+        f"comments: {WP_COMMENTS[post.comment_status]}",
+        f"published: {WP_PUBLISH[post.post_status]}",
     )
 
-    output.write(
-        """---
-layout: post
-title: "{0}"
-date: {1}
-comments: {2}
-external-url:
-categories: [{3}]
-published: {4}
----
-{5}
-""".format(
-            *output_params
-        )
-    )
+    properties = "\n".join(output_params)
+    output.write(f"---\n{properties}\n---\n{fix_post_content(post.post_content)}")
     output.close()
+
+
+SQL_GET_TAXONOMY = text(
+    """SELECT
+	object_id AS id, name, taxonomy as type
+FROM wp_term_taxonomy
+	INNER JOIN wp_terms USING(term_id)
+	INNER JOIN wp_term_relationships USING(term_taxonomy_id)
+	INNER JOIN wp_posts ON wp_posts.id = object_id
+WHERE
+    taxonomy IN ('category', 'post_tag') and
+    post_type='post' AND
+    post_status!='inherit'
+ORDER BY id, type"""
+)
+
+
+def _get_taxonomy(db) -> Tuple[Dict, Dict]:
+    """
+    Get Category and Tag from Table wp_term_taxonomy
+
+    Returns
+    -------
+    post_categories : Dict
+        1 Post -> 0..n Cates, such as {p1: [c1, c2, ..], p2: [c1]}
+    post_tags : Dict
+        1 Post -> 0..n Tags, such as {p1: [t1, t2, ...], p2: [t3]}
+
+    See Also
+    --------
+    SQL_GET_TAXONOMY
+        select post id, taxonomy name and type
+
+    """
+    # https://docs.python.org/3/library/collections.html#collections.defaultdict
+    post_categories, post_tags = defaultdict(list), defaultdict(list)
+    with db.engine.connect() as conn:
+        category_result = conn.execute(SQL_GET_TAXONOMY)
+
+        for row in category_result:
+            if "category" == row.type:
+                post_categories[row.id].append(row.name)
+            else:
+                assert "post_tag" == row.type
+                post_tags[row.id].append(row.name)
+
+        return post_categories, post_tags
+
+
+SQL_GET_POST = text(
+    """SELECT
+    posts.ID               AS `id`,
+    posts.post_title              ,
+    posts.post_type               ,
+    posts.post_status             ,
+    posts.post_name               ,
+    posts.post_date               ,
+    posts.post_content            ,
+    posts.comment_count           ,
+    posts.comment_status          ,
+    posts.post_excerpt            ,
+    users.display_name AS `author`
+FROM wp_posts AS `posts`
+    LEFT JOIN wp_users AS `users`
+        ON posts.post_author = users.ID
+WHERE
+    posts.post_status !='auto-draft' and
+    posts.post_type in ('post', 'page')"""
+)
 
 
 def dump_posts(db, host, username, password, posts_output_dir, pages_output_dir):
     """
     Connects to the database and dumps the posts.
+
+    Parameters
+    ----------
+    db : string
+        Database name, such as wp_li3huo
+    host : string
+        Database host, such as localhost
+    posts_output_dir : string
+        WP posts as mardown files, such as ./posts
+    pages_output_dir : string
+        WP pages as mardown files, such as ./pages
     """
 
-    try:
-        os.mkdir(posts_output_dir)
-        os.mkdir(pages_output_dir)
-    except OSError:
-        pass
+    os.makedirs(posts_output_dir, exist_ok=True)
+    os.makedirs(pages_output_dir, exist_ok=True)
 
     # https://docs.sqlalchemy.org/en/20/dialects/mysql.html
     db = create_engine(f"mysql+mysqlconnector://{username}:{password}@{host}/{db}")
-    metadata = MetaData()
-    wp_posts = Table("wp_posts", metadata, autoload_with=db)
 
-    # Before we select posts, we'll select all of the categories for the posts
-    # so that we can map them later. This is a lazy and inefficient way to go
-    # about this; a direct join in the posts select would be better. However,
-    # the wp_term_relationships table does not have a proper foreign key
-    # relationship between terms and the objects they relate to, so I don't
-    # think SQLAlchemy can handle the join in declarative fashion.
-    # Anyway, this is a one-off script so I'm not going to go to the trouble
-    # of figuring out the "right" way to do this in SQLAlchemy. Just be
-    # warned that you should not use this as an example.
+    post_categories, post_tags = _get_taxonomy(db)
+
     with db.engine.connect() as conn:
-        category_result = conn.execute(
-            text(
-                """
-        select object_id, name from wp_term_taxonomy 
-        inner join wp_terms using(term_id)
-        inner join wp_term_relationships using(term_taxonomy_id)
-        inner join wp_posts on wp_posts.id = object_id
-        where taxonomy = 'category' and post_type='post' and post_status!='inherit'
-        """
-            )
-        )
-        post_categories = {}
-        for row in category_result:
-            if not post_categories.get(row[0]):
-                post_categories[row[0]] = [row[1]]
-            else:
-                post_categories[row[0]].append(row[1])
-
-    with Session(db) as session:
-        posts_statement = select(
-            and_(
-                or_(wp_posts.c.post_type == "post", wp_posts.c.post_type == "page"),
-                wp_posts.c.post_status != "auto-draft",
-            )
-        )
-        result = session.execute(posts_statement).all()
-        result = session.execute(
-            select(wp_posts).filter(wp_posts.c.post_status != "auto-draft")
-        ).all()
-
-        for post in result:
+        for post in conn.execute(SQL_GET_POST):
             if post.post_type == "post":
-                dump_single_post(post, post_categories, posts_output_dir)
+                dump_single_post(post, post_categories, post_tags, posts_output_dir)
             elif post.post_type == "page":
                 dump_single_page(post, pages_output_dir)
+
+    # metadata = MetaData()
+    # wp_posts = Table("wp_posts", metadata, autoload_with=db)
+    # with Session(db) as session:
+    #     result = session.execute(
+    #         select(wp_posts).filter(wp_posts.c.post_status != "auto-draft")
+    #     )
+
+    #     for post in result:
+    #         if post.post_type == "post":
+    #             dump_single_post(post, post_categories, post_tags, posts_output_dir)
+    #         elif post.post_type == "page":
+    #             dump_single_page(post, pages_output_dir)
 
 
 def main():
