@@ -5,11 +5,11 @@ compatible markdown files.
 
 import codecs
 import os
-import re
 import sys
 from collections import defaultdict
 from typing import Dict, Tuple
 
+import html2text
 from sqlalchemy import create_engine, text
 
 USAGE = "USAGE: {0} db host username password posts_dir pages_dir"
@@ -26,13 +26,13 @@ def fix_post_content(post_content):
     whatever regexes and whatnot you want in here.
     """
 
-    post_content = post_content.replace("\r\n", "\n")
+    post_content = html2text.html2text(post_content).replace("\r\n", "\n")
 
-    # Replace syntax highlighter blocks with Octopress equivalent
-    post_content = re.sub(
-        '\[sourcecode language="([A-Za-z0-9]+)"\]', "``` \\1", post_content
-    )
-    post_content = re.sub("\[/sourcecode\]", "", post_content)
+    # # Replace syntax highlighter blocks with Octopress equivalent
+    # post_content = re.sub(
+    #     '\[sourcecode language="([A-Za-z0-9]+)"\]', "``` \\1", post_content
+    # )
+    # post_content = re.sub("\[/sourcecode\]", "", post_content)
 
     return post_content
 
@@ -46,7 +46,7 @@ def missing_name_check(post):
     # Globals are bad but I'm lazy and this is an ETL
     global missing_name_count
 
-    if post.post_name.lstrip().rstrip() == "":
+    if post.post_name.lstrip().rstrip() == "" or "%" in post.post_name:
         name = "".join(
             [
                 char
@@ -58,7 +58,7 @@ def missing_name_check(post):
             name = "missing-name-" + str(missing_name_count)
             missing_name_count += 1
         sys.stderr.write(
-            f"Warning: page/post {post.post_title} (ID {post.id}) has no name. Using name {name}\n"
+            f"Warning: page/post {post.post_title} (ID {post.id}) has bad name. Using name {name}\n"
         )
     else:
         name = post.post_name
@@ -112,17 +112,18 @@ def dump_single_post(post, post_categories, post_tags, output_dir):
     post_name = missing_name_check(post)
 
     filename = f"{post.post_date.year}-{str(post.post_date.month).zfill(2)}-{str(post.post_date.day).zfill(2)}-{post_name}.md"
+    filename = f"{post.id}-{post_name}.md"
     output = codecs.open(os.path.join(output_dir, filename), encoding="utf-8", mode="w")
 
     output_params = (
         "layout: post",
         f"wp_post_id: {post.id}",
-        f"slug: {post.post_name}",
+        # f"slug: {post.post_name}",
         f'author: "{post.author}"',
         f'title: "{post.post_title}"',
-        f"date: {str(post.post_date)[:-3]}",
-        f"categories: {', '.join(post_categories.get(post.id) or [])}",
-        f"tags: {', '.join(post_tags.get(post.id) or [])}",
+        f"date: {str(post.post_date)}",
+        # f"categories: {', '.join(post_categories.get(post.id) or [])}", # taxonomy
+        f"tags: [{', '.join(post_tags.get(post.id) or [])}]",
         f"comments: {WP_COMMENTS[post.comment_status]}",
         f"published: {WP_PUBLISH[post.post_status]}",
     )
@@ -231,19 +232,6 @@ def dump_posts(db, host, username, password, posts_output_dir, pages_output_dir)
                 dump_single_post(post, post_categories, post_tags, posts_output_dir)
             elif post.post_type == "page":
                 dump_single_page(post, pages_output_dir)
-
-    # metadata = MetaData()
-    # wp_posts = Table("wp_posts", metadata, autoload_with=db)
-    # with Session(db) as session:
-    #     result = session.execute(
-    #         select(wp_posts).filter(wp_posts.c.post_status != "auto-draft")
-    #     )
-
-    #     for post in result:
-    #         if post.post_type == "post":
-    #             dump_single_post(post, post_categories, post_tags, posts_output_dir)
-    #         elif post.post_type == "page":
-    #             dump_single_page(post, pages_output_dir)
 
 
 def main():
