@@ -26,7 +26,7 @@ def fix_post_content(post_content):
     whatever regexes and whatnot you want in here.
     """
 
-    post_content = html2text.html2text(post_content).replace("\r\n", "\n")
+    post_content = (post_content).replace("\r\n", "\n")
 
     # # Replace syntax highlighter blocks with Octopress equivalent
     # post_content = re.sub(
@@ -104,6 +104,22 @@ footer: true
     output.close()
 
 
+def refine_file_name(post):
+    """
+    Returns a valid filename for posts
+    """
+
+    name = "".join(
+        [
+            ch
+            for ch in post.post_title.replace(" ", "-")
+            if ch.isalnum() or ch == "-"
+        ]
+    )
+
+    return f"{post.id}-{name}.md"
+
+
 def dump_single_post(post, post_categories, post_tags, output_dir):
     """
     Dumps a single post (as opposed to a single page)
@@ -112,18 +128,19 @@ def dump_single_post(post, post_categories, post_tags, output_dir):
     post_name = missing_name_check(post)
 
     filename = f"{post.post_date.year}-{str(post.post_date.month).zfill(2)}-{str(post.post_date.day).zfill(2)}-{post_name}.md"
-    filename = f"{post.id}-{post_name}.md"
+    filename = refine_file_name(post)
     output = codecs.open(os.path.join(output_dir, filename), encoding="utf-8", mode="w")
 
     output_params = (
-        "layout: post",
+        # "layout: posts",
         f"wp_post_id: {post.id}",
-        # f"slug: {post.post_name}",
-        f'author: "{post.author}"',
         f'title: "{post.post_title}"',
+        f"slug: {post_name}",
         f"date: {str(post.post_date)}",
-        # f"categories: {', '.join(post_categories.get(post.id) or [])}", # taxonomy
+        f"lastmod: {str(post.post_modified)}",
+        f'author: "{post.author}"',
         f"tags: [{', '.join(post_tags.get(post.id) or [])}]",
+        f"categories: [{', '.join(post_categories.get(post.id) or [])}]",
         f"comments: {WP_COMMENTS[post.comment_status]}",
         f"published: {WP_PUBLISH[post.post_status]}",
     )
@@ -188,6 +205,7 @@ SQL_GET_POST = text(
     posts.post_status             ,
     posts.post_name               ,
     posts.post_date               ,
+    posts.post_modified           ,
     posts.post_content            ,
     posts.comment_count           ,
     posts.comment_status          ,
